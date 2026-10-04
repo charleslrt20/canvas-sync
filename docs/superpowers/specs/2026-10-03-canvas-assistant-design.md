@@ -148,3 +148,12 @@ Canvas_sync/
 ## Out of scope
 
 WhatsApp, multiple agents, automatic model routing, writing anything to Canvas, indexing non-Canvas course websites, and the Oracle migration itself (only documented for later).
+
+## Revisions after implementation (2026-10-04)
+
+| Original design | Final | Reason |
+|---|---|---|
+| Local Qwen3 by default, `/model cloud` for Groq | **NVIDIA free API (Nemotron 3 Super 120B)** by default, gpt-oss-20b as fallback, `/model local` for private mode | Local 8B took 1.5–2.5 min per reply on a 16 GB M4. Groq's free tier (8k tokens/min) broke after 1–2 tool-using questions. NVIDIA passed the 7-question back-to-back test at 1–11 s per answer. |
+| 8 AM brief + 8 PM check | **8 AM brief only** | Your choice |
+| OpenClaw defaults | Tool Search off, no bundled skills, no heartbeat, `message`/`ask_user`/session tools denied, plugin allowlist | The 8B model couldn't drive Tool Search's indirect lookup tools; prompt size and latency; security audit |
+| — | Chat resets after 30 idle min; Canvas tool output capped (10 announcements, 30 files, 4k-char file parts) | Keeps prompts small |
