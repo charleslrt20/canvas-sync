@@ -70,7 +70,7 @@
       enabled: true,
       botToken: { source: "env", provider: "default", id: "TELEGRAM_BOT_TOKEN" },
       dmPolicy: "allowlist",
-      allowFrom: ["8629190292"],
+      allowFrom: ["YOUR_TELEGRAM_USER_ID"], // numeric ID from @userinfobot
       groupPolicy: "disabled",
       // No link previews: otherwise a prompt-injected URL in a reply (e.g. hidden in a
       // Canvas announcement) is fetched by Telegram's servers without any click.
@@ -82,9 +82,9 @@
     servers: {
       canvas_lms: {
         transport: "stdio",
-        command: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp/.venv/bin/python",
+        command: "/ABSOLUTE/PATH/TO/Canvas_sync/canvas-mcp/.venv/bin/python",
         args: ["-m", "canvas_mcp.server"],
-        cwd: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp",
+        cwd: "/ABSOLUTE/PATH/TO/Canvas_sync/canvas-mcp",
         connectionTimeoutMs: 90000, // default 30 s was exceeded once under memory pressure
         // Only our 8 tools, not the generic prompts_*/resources_* helpers.
         toolFilter: {

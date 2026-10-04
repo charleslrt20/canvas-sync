@@ -4,7 +4,7 @@
 set -euo pipefail
 
 OC="${OPENCLAW:-$HOME/.openclaw/bin/openclaw}"
-TO="${TELEGRAM_CHAT_ID:-8629190292}" # your Telegram user ID = your DM chat ID
+TO="${TELEGRAM_CHAT_ID:?Set TELEGRAM_CHAT_ID to your Telegram user ID (also your DM chat ID)}"
 MODEL="${REMINDER_MODEL:-ollama/qwen3:8b}"
 COMMON=(--tz "America/New_York" --session isolated --model "$MODEL" --announce --channel telegram --to "$TO")
 

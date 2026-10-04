@@ -1,6 +1,6 @@
 # Canvas Assistant
 
-A personal study assistant on Telegram (**@Canvas237_bot**) that knows your MIT Canvas: deadlines, missing work, announcements, grades and course files. It runs on [OpenClaw](https://docs.openclaw.ai) with free open models:
+A personal study assistant on Telegram that knows your MIT Canvas: deadlines, missing work, announcements, grades and course files. It runs on [OpenClaw](https://docs.openclaw.ai) with free open models:
 
 - **Chat:** Nemotron 3 Super 120B on NVIDIA's free API (build.nvidia.com), 1–11 s per reply, with gpt-oss-20b on the same API as fallback.
 - **Reminder:** Qwen3 8B on Ollama, locally. A brief is sent every day at 8 AM.
@@ -46,13 +46,14 @@ Both files should be `chmod 600`. Rotate the Canvas token at canvas.mit.edu → 
 
 ## Setup (from scratch)
 
-Run everything from the repo root. This setup is personal: `openclaw/config.patch.json5` contains this Mac's absolute path to `canvas-mcp/` (`mcp.servers.canvas_lms`) and one Telegram user ID (`allowFrom`), and `openclaw/automations.sh` has the same ID. If you clone the repo elsewhere, edit those first.
+Run everything from the repo root. This setup is personal: `openclaw/config.patch.json5` has placeholders for your absolute path to `canvas-mcp/` (`mcp.servers.canvas_lms`) and your Telegram user ID (`allowFrom`); `openclaw/automations.sh` reads the same ID from `TELEGRAM_CHAT_ID`. Fill both in before applying the patch.
 
 ```bash
 # 0. Secrets (never committed)
 cp .env.example .env && chmod 600 .env          # then set CANVAS_TOKEN
 touch ~/.openclaw/.env && chmod 600 ~/.openclaw/.env
 #    add TELEGRAM_BOT_TOKEN=... and NVIDIA_API_KEY=nvapi-... to ~/.openclaw/.env
+export TELEGRAM_CHAT_ID=...                     # your numeric Telegram user ID, from @userinfobot
 
 # 1. Canvas server
 (cd canvas-mcp && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock && .venv/bin/pip install --no-deps -e .)
@@ -63,6 +64,8 @@ canvas-mcp/.venv/bin/python canvas-mcp/scripts/smoke.py   # live read-only check
 ollama pull qwen3:8b
 
 # 3. OpenClaw config (back up first)
+#    Edit openclaw/config.patch.json5 first: set mcp.servers.canvas_lms.command/cwd to this
+#    repo's absolute path, and channels.telegram.allowFrom to your Telegram user ID.
 cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.pre-canvas
 mkdir -p ~/.openclaw/workspace.pre-canvas && cp ~/.openclaw/workspace/*.md ~/.openclaw/workspace.pre-canvas/
 openclaw config patch --file openclaw/config.patch.json5 --dry-run
