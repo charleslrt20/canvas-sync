@@ -21,7 +21,10 @@
     defaults: {
       userTimezone: "America/New_York",
       models: {
-        "ollama/qwen3:8b": { alias: "local" },
+        // 16k context: fits the ~7k-token prompt with room for tool results and uses
+        // ~2.5 GB less RAM than 32k. keep_alive keeps the model loaded between
+        // messages, so Ollama can reuse the cached prompt (first reply slow, then fast).
+        "ollama/qwen3:8b": { alias: "local", params: { num_ctx: 16384, keep_alive: "2h" } },
         "groq/openai/gpt-oss-120b": { alias: "cloud" },
       },
     },
@@ -32,6 +35,13 @@
         model: "ollama/qwen3:8b",
         // Only free models can be selected; blocks the paid Anthropic profile.
         modelPolicy: { allow: ["ollama/*", "groq/*"] },
+        // No bundled skills (Notion, meme-maker, ClawHub…): smaller prompt, fewer ways to go wrong.
+        skills: [],
+        // Qwen3 "thinking" roughly doubles latency on a laptop; /think can still turn it on per chat.
+        thinkingDefault: "off",
+        // No 30-minute background heartbeat: it occupies the local model and the
+        // Canvas reminders are explicit automations instead.
+        heartbeat: { every: "0m" },
       },
     },
   },
@@ -53,6 +63,11 @@
         command: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp/.venv/bin/python",
         args: ["-m", "canvas_mcp.server"],
         cwd: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp",
+        // Only our 8 tools, not the generic prompts_*/resources_* helpers.
+        toolFilter: {
+          include: ["list_courses", "upcoming", "missing", "assignment_details",
+                    "announcements", "grades", "list_files", "read_file"],
+        },
       },
     },
   },
@@ -60,6 +75,9 @@
   tools: {
     profile: "messaging",
     alsoAllow: ["canvas_lms__*"],
+    // Expose tools directly. Tool Search hides them behind search/describe/call
+    // meta-tools, which an 8B model fails to drive (3/3 failed calls in testing).
+    toolSearch: false,
     deny: [
       "group:runtime", // exec, process, code_execution
       "group:fs", // read, write, edit, apply_patch
@@ -67,8 +85,9 @@
       "group:nodes", // computer control
       "group:automation", // cron/gateway tools (jobs are created from the CLI instead)
       "group:web", // fetched web pages are a prompt-injection vector
-      "sessions_spawn",
-      "sessions_send",
+      "group:sessions", // session/conversation management, sub-agents
+      "presence",
+      "intent",
     ],
     exec: { security: "deny", ask: "always" },
     elevated: { enabled: false },
@@ -77,6 +96,8 @@
   },
 
   plugins: {
+    // Only these plugins may load (security audit: extensions_no_allowlist).
+    allow: ["telegram", "ollama", "groq", "memory-core", "document-extract", "device-pair"],
     entries: {
       browser: { enabled: false },
     },
