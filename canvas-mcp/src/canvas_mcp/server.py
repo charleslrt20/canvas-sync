@@ -7,6 +7,7 @@ never leaves this process; the model only ever sees tool results.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from functools import cache
 from pathlib import Path
@@ -20,6 +21,9 @@ from .client import CanvasClient, CanvasError
 from .tools import CanvasTools
 
 DEFAULT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+# httpx logs full URLs at INFO (incl. one-time file download verifiers); keep them out of logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True)
 
 mcp = MCPServer(

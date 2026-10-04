@@ -24,13 +24,24 @@ def _parse(ts: str | None) -> datetime | None:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
-def _local(ts: str | None) -> str | None:
+def _local(ts: str | None, now: datetime) -> str | None:
+    """'Tue Oct 6, 11:59 PM', with the year added when it isn't the current one."""
     dt = _parse(ts)
-    return dt.astimezone(LOCAL_TZ).strftime("%a %b %-d, %-I:%M %p") if dt else None
+    if not dt:
+        return None
+    dt = dt.astimezone(LOCAL_TZ)
+    fmt = "%a %b %-d, %-I:%M %p" if dt.year == now.astimezone(LOCAL_TZ).year else "%a %b %-d, %Y, %-I:%M %p"
+    return dt.strftime(fmt)
 
 
 def _utc_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _label(course: dict) -> str:
+    """'15.774 AI for Operations' rather than '15.774_FA26 15.774 AI for Operations'."""
+    code, name = course.get("course_code") or "", course.get("name") or ""
+    return name if not code or code.split("_")[0] in name else f"{code} {name}"
 
 
 def _size(n: int | None) -> str:
@@ -45,6 +56,9 @@ class CanvasTools:
 
     # -- helpers ---------------------------------------------------------------
 
+    def _fmt(self, ts: str | None) -> str | None:
+        return _local(ts, self._now())
+
     def _courses(self) -> list[dict]:
         return [
             c for c in self._client.get_all("/courses", [("enrollment_state", "active"), ("per_page", "50")])
@@ -52,7 +66,7 @@ class CanvasTools:
         ]
 
     def _course_labels(self) -> dict[int, str]:
-        return {c["id"]: f"{c.get('course_code', '')} {c['name']}".strip() for c in self._courses()}
+        return {c["id"]: _label(c) for c in self._courses()}
 
     # -- tools -----------------------------------------------------------------
 
@@ -76,7 +90,7 @@ class CanvasTools:
                 "type": it.get("plannable_type"),
                 "course": it.get("context_name"),
                 "course_id": it.get("course_id"),
-                "due": _local(it.get("plannable_date")),
+                "due": self._fmt(it.get("plannable_date")),
                 "_sort": it.get("plannable_date") or "",
             }
             if it.get("plannable_type") == "assignment":
@@ -94,7 +108,11 @@ class CanvasTools:
         return items or f"Nothing due in the next {days} days."
 
     def missing(self) -> Any:
-        rows = self._client.get_all("/users/self/missing_submissions", [("per_page", "100")])
+        now = self._now()
+        rows = [
+            a for a in self._client.get_all("/users/self/missing_submissions", [("per_page", "100")])
+            if (due := _parse(a.get("due_at"))) is None or due <= now  # Canvas sometimes includes not-yet-due work
+        ]
         if not rows:
             return "No missing assignments."
         labels = self._course_labels()
@@ -104,7 +122,7 @@ class CanvasTools:
                 "course": labels.get(a.get("course_id"), str(a.get("course_id"))),
                 "course_id": a.get("course_id"),
                 "assignment_id": a.get("id"),
-                "due": _local(a.get("due_at")),
+                "due": self._fmt(a.get("due_at")),
                 "points": a.get("points_possible"),
                 "url": a.get("html_url"),
             }
@@ -122,14 +140,14 @@ class CanvasTools:
         ]
         return {
             "title": a.get("name"),
-            "due": _local(a.get("due_at")),
-            "locks": _local(a.get("lock_at")),
+            "due": self._fmt(a.get("due_at")),
+            "locks": self._fmt(a.get("lock_at")),
             "points": a.get("points_possible"),
             "submission_types": a.get("submission_types"),
             "instructions": html_to_text(a.get("description")),
             "rubric": rubric,
             "status": sub.get("workflow_state"),
-            "submitted_at": _local(sub.get("submitted_at")),
+            "submitted_at": self._fmt(sub.get("submitted_at")),
             "score": sub.get("score"),
             "late": sub.get("late"),
             "url": a.get("html_url"),
@@ -152,7 +170,7 @@ class CanvasTools:
             out.append({
                 "title": a.get("title"),
                 "course": labels.get(cid, str(cid)),
-                "posted": _local(a.get("posted_at")),
+                "posted": self._fmt(a.get("posted_at")),
                 "author": (a.get("author") or {}).get("display_name"),
                 "message": text,
                 "url": a.get("html_url"),
@@ -171,7 +189,7 @@ class CanvasTools:
                 enr = next((e for e in c.get("enrollments") or [] if e.get("type") == "student"), {})
                 out.append({
                     "course_id": c["id"],
-                    "course": f"{c.get('course_code', '')} {c['name']}".strip(),
+                    "course": _label(c),
                     "current_score": enr.get("computed_current_score"),
                     "current_grade": enr.get("computed_current_grade"),
                 })
@@ -201,7 +219,7 @@ class CanvasTools:
             raise
         return [
             {"file_id": f["id"], "name": f.get("display_name"), "type": f.get("content-type"),
-             "size": _size(f.get("size")), "updated": _local(f.get("updated_at"))}
+             "size": _size(f.get("size")), "updated": self._fmt(f.get("updated_at"))}
             for f in files
         ] or "No files found."
 

@@ -198,3 +198,25 @@ def test_canvas_errors_become_messages():
     t, _ = tools_with({"/users/self/missing_submissions": CanvasError("Canvas token invalid or expired")})
     with pytest.raises(CanvasError):
         t.missing()
+
+
+def test_missing_skips_items_not_yet_due():
+    t, _ = tools_with({"/users/self/missing_submissions": [
+        {"id": 9, "name": "Future proposal", "course_id": 2, "due_at": "2026-11-08T04:59:00Z"},
+    ]})
+    assert t.missing() == "No missing assignments."
+
+
+def test_course_label_avoids_repeating_code():
+    t, _ = tools_with({})
+    t._client.responses["/courses"] = [
+        {"id": 5, "name": "15.774 AI for Operations", "course_code": "15.774_FA26"},
+    ]
+    assert t._course_labels() == {5: "15.774 AI for Operations"}
+
+
+def test_dates_from_another_year_show_the_year():
+    t, _ = tools_with({"/users/self/missing_submissions": [
+        {"id": 9, "name": "Old proposal", "course_id": 2, "due_at": "2025-11-08T04:59:59Z"},
+    ]})
+    assert t.missing()[0]["due"] == "Fri Nov 7, 2025, 11:59 PM"

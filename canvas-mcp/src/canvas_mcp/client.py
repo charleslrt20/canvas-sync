@@ -29,7 +29,7 @@ ALLOWED_PATHS = [
 ]
 
 # Hosts Canvas redirects file downloads to (Instructure's file CDN).
-FILE_CDN_SUFFIXES = (".inscloudgate.net", ".instructure.com", ".s3.amazonaws.com")
+FILE_CDN_SUFFIXES = (".canvas-user-content.com", ".inscloudgate.net", ".instructure.com", ".s3.amazonaws.com")
 MAX_DOWNLOAD_BYTES = 50_000_000
 _LINK_NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
 

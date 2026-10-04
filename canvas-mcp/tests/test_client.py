@@ -180,3 +180,14 @@ def test_download_refuses_oversized_file(client):
     respx.get(f"{API}/files/7").respond(json={"id": 7, "size": 200_000_000, "url": f"{BASE}/files/7/download"})
     with pytest.raises(CanvasError, match="too large"):
         client.download(7)
+
+
+@respx.mock
+def test_download_allows_canvas_user_content_host(client):
+    respx.get(f"{API}/files/8").respond(json={"id": 8, "url": f"{BASE}/files/8/download"})
+    respx.get(f"{BASE}/files/8/download").respond(
+        302, headers={"Location": "https://a1-8.cluster335.canvas-user-content.com/files/8"}
+    )
+    cdn = respx.get("https://a1-8.cluster335.canvas-user-content.com/files/8").respond(content=b"data")
+    assert client.download(8)[1] == b"data"
+    assert "Authorization" not in cdn.calls.last.request.headers
