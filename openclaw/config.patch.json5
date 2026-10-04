@@ -6,7 +6,8 @@
 // TELEGRAM_BOT_TOKEN and GROQ_API_KEY come from ~/.openclaw/.env.
 {
   gateway: { mode: "local", bind: "loopback" }, // existing token auth is kept
-  session: { dmScope: "per-channel-peer" },
+  // Fresh conversation after 30 idle minutes keeps history under Groq's 8k-token cap.
+  session: { dmScope: "per-channel-peer", reset: { mode: "idle", idleMinutes: 30 } },
 
   env: { vars: { OLLAMA_API_KEY: "ollama-local" } }, // placeholder Ollama expects, not a secret
 
@@ -31,20 +32,20 @@
     defaults: {
       userTimezone: "America/New_York",
       models: {
-        // 16k context: fits the ~7k-token prompt with room for tool results and uses
-        // ~2.5 GB less RAM than 32k. keep_alive keeps the model loaded between
-        // messages, so Ollama can reuse the cached prompt (first reply slow, then fast).
-        "ollama/qwen3:8b": { alias: "local", params: { num_ctx: 16384, keep_alive: "2h" } },
+        // 16k context fits the prompt plus tool results and uses ~2.5 GB less RAM than 32k.
+        // The local model mostly runs the two daily reminders, so unload it soon after.
+        "ollama/qwen3:8b": { alias: "local", params: { num_ctx: 16384, keep_alive: "5m" } },
         "groq/openai/gpt-oss-120b": { alias: "cloud" },
       },
     },
     entries: {
       main: {
-        // Chat runs on Groq (free tier, a few seconds per reply). The local 8B model
-        // was accurate but took 1.5-2.5 min per reply on a 16 GB M4. If Groq is rate
-        // limited, fall back to local (more private, just slower). Reminders pin
-        // ollama/qwen3:8b in openclaw/automations.sh. /model local = private mode.
-        model: { primary: "groq/openai/gpt-oss-120b", fallbacks: ["ollama/qwen3:8b"] },
+        // Chat runs on Groq (free tier, ~6 s per reply). The local 8B model was accurate
+        // but took 1.5-2.5 min per reply on a 16 GB M4. No fallback: falling back to the
+        // local model when Groq is rate limited stalled replies for minutes and starved
+        // the Mac of RAM; failing fast ("try again in a minute") is better.
+        // Reminders pin ollama/qwen3:8b in openclaw/automations.sh. /model local = private mode.
+        model: "groq/openai/gpt-oss-120b",
         // Only free models can be selected; blocks the paid Anthropic profile.
         modelPolicy: { allow: ["ollama/*", "groq/*"] },
         // No bundled skills (Notion, meme-maker, ClawHub…): smaller prompt, fewer ways to go wrong.
@@ -75,6 +76,7 @@
         command: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp/.venv/bin/python",
         args: ["-m", "canvas_mcp.server"],
         cwd: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp",
+        connectionTimeoutMs: 90000, // default 30 s was exceeded once under memory pressure
         // Only our 8 tools, not the generic prompts_*/resources_* helpers.
         toolFilter: {
           include: ["list_courses", "upcoming", "missing", "assignment_details",
