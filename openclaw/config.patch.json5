@@ -1,0 +1,84 @@
+// Patch for ~/.openclaw/openclaw.json that turns the existing install into the
+// Canvas assistant. Apply with:
+//   openclaw config patch --file openclaw/config.patch.json5 --dry-run   # validate
+//   openclaw config patch --file openclaw/config.patch.json5             # write
+// Objects merge, arrays/scalars replace, null deletes. No secrets in here:
+// TELEGRAM_BOT_TOKEN and GROQ_API_KEY come from ~/.openclaw/.env.
+{
+  gateway: { mode: "local", bind: "loopback" }, // existing token auth is kept
+  session: { dmScope: "per-channel-peer" },
+
+  env: { vars: { OLLAMA_API_KEY: "ollama-local" } }, // placeholder Ollama expects, not a secret
+
+  models: {
+    providers: {
+      // Native Ollama API: no /v1, which breaks tool calling.
+      ollama: { baseUrl: "http://127.0.0.1:11434" },
+    },
+  },
+
+  agents: {
+    defaults: {
+      userTimezone: "America/New_York",
+      models: {
+        "ollama/qwen3:8b": { alias: "local" },
+        "groq/openai/gpt-oss-120b": { alias: "cloud" },
+      },
+    },
+    entries: {
+      main: {
+        // Plain string = no automatic fallback, so Canvas data only reaches
+        // the cloud when you type /model cloud yourself.
+        model: "ollama/qwen3:8b",
+        // Only free models can be selected; blocks the paid Anthropic profile.
+        modelPolicy: { allow: ["ollama/*", "groq/*"] },
+      },
+    },
+  },
+
+  channels: {
+    telegram: {
+      enabled: true,
+      botToken: { source: "env", provider: "default", id: "TELEGRAM_BOT_TOKEN" },
+      dmPolicy: "allowlist",
+      allowFrom: ["8629190292"],
+      groupPolicy: "disabled",
+    },
+  },
+
+  mcp: {
+    servers: {
+      canvas_lms: {
+        transport: "stdio",
+        command: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp/.venv/bin/python",
+        args: ["-m", "canvas_mcp.server"],
+        cwd: "/Users/charlesloriot/Desktop/VS Code/Canvas_sync/canvas-mcp",
+      },
+    },
+  },
+
+  tools: {
+    profile: "messaging",
+    alsoAllow: ["canvas_lms__*"],
+    deny: [
+      "group:runtime", // exec, process, code_execution
+      "group:fs", // read, write, edit, apply_patch
+      "group:ui", // browser, screen, terminal, canvas panel
+      "group:nodes", // computer control
+      "group:automation", // cron/gateway tools (jobs are created from the CLI instead)
+      "group:web", // fetched web pages are a prompt-injection vector
+      "sessions_spawn",
+      "sessions_send",
+    ],
+    exec: { security: "deny", ask: "always" },
+    elevated: { enabled: false },
+    sessions: { visibility: "agent" },
+    agentToAgent: { enabled: false },
+  },
+
+  plugins: {
+    entries: {
+      browser: { enabled: false },
+    },
+  },
+}
