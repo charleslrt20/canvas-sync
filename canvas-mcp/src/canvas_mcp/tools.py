@@ -15,7 +15,12 @@ from .client import CanvasClient, CanvasError
 from .textutil import chunk, extract_text, html_to_text
 
 LOCAL_TZ = ZoneInfo("America/New_York")
-MAX_MESSAGE_CHARS = 1500
+# Tool results are kept small: Groq's free tier rejects any request over 8k tokens.
+PREVIEW_CHARS = 280  # announcement text in overviews
+FULL_MESSAGE_CHARS = 1500  # announcement text when searching for specific ones
+MAX_ANNOUNCEMENTS = 10
+MAX_FILES = 30
+FILE_CHUNK_CHARS = 4000
 
 
 def _parse(ts: str | None) -> datetime | None:
@@ -153,7 +158,7 @@ class CanvasTools:
             "url": a.get("html_url"),
         }
 
-    def announcements(self, days: int = 14, course_id: int | None = None) -> Any:
+    def announcements(self, days: int = 7, course_id: int | None = None, search: str | None = None) -> Any:
         labels = self._course_labels()
         ids = [int(course_id)] if course_id else list(labels)
         if not ids:
@@ -161,11 +166,17 @@ class CanvasTools:
         now = self._now()
         params = [("start_date", _utc_iso(now - timedelta(days=days))), ("end_date", _utc_iso(now)), ("per_page", "50")]
         params += [("context_codes[]", f"course_{i}") for i in ids]
-        out = []
-        for a in self._client.get_all("/announcements", params):
+        rows = self._client.get_all("/announcements", params)
+        if search:
+            needle = search.lower()
+            rows = [a for a in rows if needle in (a.get("title") or "").lower() or needle in (a.get("message") or "").lower()]
+        rows.sort(key=lambda a: a.get("posted_at") or "", reverse=True)
+        limit = FULL_MESSAGE_CHARS if search else PREVIEW_CHARS
+        out: list = []
+        for a in rows[:MAX_ANNOUNCEMENTS]:
             text = html_to_text(a.get("message"))
-            if len(text) > MAX_MESSAGE_CHARS:
-                text = text[:MAX_MESSAGE_CHARS].rstrip() + "…"
+            if len(text) > limit:
+                text = text[:limit].rstrip() + "…"
             cid = int(str(a.get("context_code", "course_0")).removeprefix("course_"))
             out.append({
                 "title": a.get("title"),
@@ -175,7 +186,12 @@ class CanvasTools:
                 "message": text,
                 "url": a.get("html_url"),
             })
-        return out or f"No announcements in the last {days} days."
+        if len(rows) > MAX_ANNOUNCEMENTS:
+            out.append(f"{len(rows) - MAX_ANNOUNCEMENTS} more older announcements not shown; "
+                       "use search=<word> or course_id to narrow down.")
+        if not out:
+            return f"No announcements{' matching ' + repr(search) if search else ''} in the last {days} days."
+        return out
 
     def grades(self, course_id: int | None = None) -> Any:
         if course_id is None:
@@ -217,11 +233,14 @@ class CanvasTools:
                 return ("This course doesn't share files in Canvas. Its materials are probably on the "
                         "course website, which this assistant can't read.")
             raise
-        return [
+        out: list = [
             {"file_id": f["id"], "name": f.get("display_name"), "type": f.get("content-type"),
              "size": _size(f.get("size")), "updated": self._fmt(f.get("updated_at"))}
-            for f in files
-        ] or "No files found."
+            for f in files[:MAX_FILES]
+        ]
+        if len(files) > MAX_FILES:
+            out.append(f"{len(files) - MAX_FILES} more older files not shown; use search=<name> to find one.")
+        return out or "No files found."
 
     def read_file(self, file_id: int, page: int = 1) -> str:
         meta, data = self._client.download(int(file_id))
@@ -232,4 +251,4 @@ class CanvasTools:
             return str(exc)
         if not text.strip():
             return f"{name} has no extractable text (it may be scanned images)."
-        return f"{name}\n\n{chunk(text, page=page)}"
+        return f"{name}\n\n{chunk(text, page=page, size=FILE_CHUNK_CHARS)}"

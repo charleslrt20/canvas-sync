@@ -185,8 +185,8 @@ def test_read_file_chunks():
     t, _ = tools_with({}, files={7: ({"display_name": "notes.txt", "content-type": "text/plain"}, b"y" * 9000)})
     out = t.read_file(7)
     assert out.startswith("notes.txt\n\n")
-    assert "[part 1 of 2" in out
-    assert "[part 2 of 2]" in t.read_file(7, page=2)
+    assert "[part 1 of 3" in out
+    assert "[part 3 of 3]" in t.read_file(7, page=3)
 
 
 def test_read_file_unsupported():
@@ -220,3 +220,33 @@ def test_dates_from_another_year_show_the_year():
         {"id": 9, "name": "Old proposal", "course_id": 2, "due_at": "2025-11-08T04:59:59Z"},
     ]})
     assert t.missing()[0]["due"] == "Fri Nov 7, 2025, 11:59 PM"
+
+
+def _announcement(i, text="short"):
+    return {"title": f"Ann {i}", "message": f"<p>{text}</p>", "posted_at": f"2026-10-0{1 + i % 5}T12:00:00Z",
+            "context_code": "course_1", "author": {"display_name": "Prof"}, "html_url": f"u{i}"}
+
+
+def test_announcements_overview_is_compact_and_capped():
+    t, _ = tools_with({"/announcements": [_announcement(i, "y" * 2000) for i in range(15)]})
+    out = t.announcements()
+    items, note = out[:-1], out[-1]
+    assert len(items) == 10
+    assert all(len(a["message"]) <= 281 for a in items)
+    assert "5 more" in note and "search" in note
+
+
+def test_announcements_search_returns_full_text_of_matches():
+    anns = [_announcement(0, "Exam moved to room 10-250 " + "z" * 1000), _announcement(1, "Office hours")]
+    anns[0]["title"] = "Midterm logistics"
+    t, _ = tools_with({"/announcements": anns})
+    [a] = t.announcements(search="midterm")
+    assert a["title"] == "Midterm logistics" and len(a["message"]) > 1000
+
+
+def test_list_files_capped_with_hint():
+    files = [{"id": i, "display_name": f"f{i}.pdf", "content-type": "application/pdf", "size": 1000,
+              "updated_at": "2026-10-01T15:00:00Z"} for i in range(45)]
+    t, _ = tools_with({"/courses/1/files": files})
+    out = t.list_files(1)
+    assert len(out) == 31 and "15 more" in out[-1]

@@ -82,9 +82,10 @@ def assignment_details(course_id: int, assignment_id: int) -> str:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def announcements(days: int = 14, course_id: int | None = None) -> str:
-    """Recent course announcements from professors/TAs (last `days` days), across all courses or one course."""
-    return _run("announcements", days=days, course_id=course_id)
+def announcements(days: int = 7, course_id: int | None = None, search: str | None = None) -> str:
+    """Recent course announcements from professors/TAs (last `days` days, newest first, short previews).
+    Use course_id for one course. Use search=<word> (e.g. "midterm") to get the full text of matching ones."""
+    return _run("announcements", days=days, course_id=course_id, search=search)
 
 
 @mcp.tool(annotations=READ_ONLY)
