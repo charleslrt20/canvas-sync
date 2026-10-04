@@ -250,3 +250,49 @@ def test_list_files_capped_with_hint():
     t, _ = tools_with({"/courses/1/files": files})
     out = t.list_files(1)
     assert len(out) == 31 and "15 more" in out[-1]
+
+
+# --- review fixes ----------------------------------------------------------
+
+def test_grades_for_course_handles_null_points():
+    t, _ = tools_with({"/courses/1/students/submissions": [
+        {"assignment": {"name": "Practice", "points_possible": None}, "score": None, "workflow_state": "unsubmitted"},
+    ]})
+    assert t.grades(course_id=1) == [{"assignment": "Practice", "score": "-", "status": "unsubmitted"}]
+
+
+def test_announcement_with_missing_context_code_does_not_crash():
+    t, _ = tools_with({"/announcements": [{"title": "x", "message": "<p>hi</p>", "context_code": None}]})
+    assert t.announcements()[0]["title"] == "x"
+
+
+def test_time_window_params_are_stable_within_a_minute():
+    calls = []
+    t, client = tools_with({"/planner/items": []})
+    seconds = iter([NOW, NOW.replace(second=40)])
+    t._now = lambda: next(seconds)
+    t.upcoming(days=7); t.upcoming(days=7)
+    first, second = [c[1] for c in client.calls if c[0] == "/planner/items"]
+    assert first == second
+
+
+def test_read_file_caches_extracted_text():
+    downloads = []
+    t, client = tools_with({}, files={7: ({"display_name": "n.txt", "content-type": "text/plain"}, b"y" * 9000)})
+    real = client.download
+    client.download = lambda fid: downloads.append(fid) or real(fid)
+    t.read_file(7, page=1); t.read_file(7, page=2)
+    assert downloads == [7]
+
+
+def test_read_file_corrupt_pdf_returns_message():
+    t, _ = tools_with({}, files={8: ({"display_name": "bad.pdf", "content-type": "application/pdf"}, b"%PDF-garbage")})
+    assert "couldn't read" in t.read_file(8).lower()
+
+
+def test_announcements_does_not_mutate_cached_rows():
+    rows = [{"title": "a", "posted_at": "2026-10-01T00:00:00Z", "context_code": "course_1"},
+            {"title": "b", "posted_at": "2026-10-03T00:00:00Z", "context_code": "course_1"}]
+    t, _ = tools_with({"/announcements": rows})
+    t.announcements()
+    assert [r["title"] for r in rows] == ["a", "b"]

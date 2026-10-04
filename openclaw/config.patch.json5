@@ -23,7 +23,7 @@
         baseUrl: "https://integrate.api.nvidia.com/v1",
         models: [{ id: "openai/gpt-oss-20b", name: "GPT-OSS 20B" }],
       },
-      groq: null, // replaced by NVIDIA
+      groq: null, // replaced by NVIDIA (no-op on a fresh install)
     },
   },
 
@@ -32,7 +32,7 @@
       userTimezone: "America/New_York",
       models: {
         // 16k context fits the prompt plus tool results and uses ~2.5 GB less RAM than 32k.
-        // The local model mostly runs the two daily reminders, so unload it soon after.
+        // The local model mostly runs the 8 AM brief, so unload it soon after.
         "ollama/qwen3:8b": { alias: "local", params: { num_ctx: 16384, keep_alive: "5m" } },
         "nvidia/nvidia/nemotron-3-super-120b-a12b": { alias: "cloud" },
         "nvidia/openai/gpt-oss-20b": { alias: "cloud-small" },
@@ -54,11 +54,13 @@
         modelPolicy: { allow: ["ollama/*", "nvidia/*"] },
         // No bundled skills (Notion, meme-maker, ClawHub…): smaller prompt, fewer ways to go wrong.
         skills: [],
-        // Qwen3 "thinking" roughly doubles latency on a laptop; /think can still turn it on per chat.
+        // Faster replies (and Qwen3 thinking doubled latency locally); /think re-enables it per chat.
         thinkingDefault: "off",
         // No 30-minute background heartbeat: it occupies the local model and the
         // Canvas reminders are explicit automations instead.
         heartbeat: { every: "0m" },
+        // Leftover per-model entry for the old paid Anthropic setup.
+        models: null,
       },
     },
   },
@@ -70,6 +72,9 @@
       dmPolicy: "allowlist",
       allowFrom: ["8629190292"],
       groupPolicy: "disabled",
+      // No link previews: otherwise a prompt-injected URL in a reply (e.g. hidden in a
+      // Canvas announcement) is fetched by Telegram's servers without any click.
+      linkPreview: false,
     },
   },
 
@@ -104,23 +109,34 @@
       "group:automation", // cron/gateway tools (jobs are created from the CLI instead)
       "group:web", // fetched web pages are a prompt-injection vector
       "group:sessions", // session/conversation management, sub-agents
+      // Already outside the messaging profile; denied again as defense in depth.
+      // (group:openclaw covers built-in tools only, not our MCP tools.)
+      "group:memory",
+      "group:media",
+      "group:agents",
+      "group:openclaw",
       "presence",
       "intent",
       // Replies reach Telegram without these; `message` alone is ~3k tokens of schema.
       "message",
       "ask_user",
     ],
-    exec: { security: "deny", ask: "always" },
+    // Redundant with the denies above; kept so a future profile change can't reopen them.
+    exec: { security: "deny", ask: null },
     elevated: { enabled: false },
     sessions: { visibility: "agent" },
     agentToAgent: { enabled: false },
   },
 
   plugins: {
-    // Only these plugins may load (security audit: extensions_no_allowlist).
-    allow: ["telegram", "ollama", "nvidia", "memory-core", "document-extract", "device-pair"],
+    // Only these plugins may load. Not device-pair (its /pair codes grant operator.admin),
+    // document-extract (our server parses PDFs) or memory-core (no persistent memory needed).
+    allow: ["telegram", "ollama", "nvidia"],
     entries: {
-      browser: { enabled: false },
+      browser: { enabled: false }, // redundant with plugins.allow; defense in depth
+      // Leftovers from the original install (paid Anthropic model) and the Groq trial:
+      anthropic: null,
+      groq: null,
     },
   },
 }

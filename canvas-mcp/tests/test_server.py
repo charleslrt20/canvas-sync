@@ -28,3 +28,14 @@ def test_stdio_server_lists_read_only_tools_and_reports_missing_token(tmp_path):
     assert all(t.annotations and t.annotations.read_only_hint for t in tools)
     text = result.content[0].text
     assert text == "Canvas error: CANVAS_TOKEN is not set"
+
+
+def test_unexpected_exceptions_become_short_messages(monkeypatch):
+    from canvas_mcp import server
+
+    class Boom:
+        def missing(self):
+            raise KeyError("weird canvas json")
+
+    monkeypatch.setattr(server, "_tools", lambda: Boom())
+    assert server._run("missing") == "Canvas error: unexpected response from Canvas (KeyError)"

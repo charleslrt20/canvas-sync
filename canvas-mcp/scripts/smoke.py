@@ -50,7 +50,8 @@ def main() -> int:
             files = tools.list_files(c["course_id"])
             if isinstance(files, list) and files:
                 show(f"list_files({c['code']})", files)
-                pdf = next((f for f in files if "pdf" in (f["type"] or "")), files[0])
+                entries = [f for f in files if isinstance(f, dict)]  # skip the "N more files" note
+                pdf = next((f for f in entries if "pdf" in (f["type"] or "")), entries[0])
                 break
             print(f"   list_files({c['code']}): {str(files)[:120]}")
         if pdf:

@@ -129,7 +129,8 @@ def test_cache_key_includes_params(client):
 )
 @respx.mock
 def test_http_errors_are_mapped(client, status, message):
-    respx.get(f"{API}/courses").respond(status, text=f"echo {TOKEN}")
+    headers = {"WWW-Authenticate": 'Bearer realm="canvas-lms"'} if status == 401 else {}
+    respx.get(f"{API}/courses").respond(status, text=f"echo {TOKEN}", headers=headers)
     with pytest.raises(CanvasError, match=message) as exc:
         client.get("/courses")
     assert TOKEN not in str(exc.value)
@@ -191,3 +192,70 @@ def test_download_allows_canvas_user_content_host(client):
     cdn = respx.get("https://a1-8.cluster335.canvas-user-content.com/files/8").respond(content=b"data")
     assert client.download(8)[1] == b"data"
     assert "Authorization" not in cdn.calls.last.request.headers
+
+
+# --- review fixes ----------------------------------------------------------
+
+@respx.mock
+def test_401_with_valid_token_but_no_access_is_no_permission(client):
+    respx.get(f"{API}/courses/1/files").respond(401, json={"status": "unauthorized",
+                                                          "errors": [{"message": "user not authorized to perform that action"}]})
+    with pytest.raises(CanvasError, match="no permission"):
+        client.get("/courses/1/files")
+
+
+@respx.mock
+def test_401_invalid_token_is_reported_as_token_problem(client):
+    respx.get(f"{API}/courses").respond(401, headers={"WWW-Authenticate": 'Bearer realm="canvas-lms"'},
+                                        json={"errors": [{"message": "Invalid access token."}]})
+    with pytest.raises(CanvasError, match="token invalid or expired"):
+        client.get("/courses")
+
+
+@respx.mock
+def test_next_link_over_http_is_refused(client):
+    respx.get(f"{API}/courses").respond(
+        json=[{"id": 1}], headers={"Link": '<http://canvas.example.edu/api/v1/courses?page=2>; rel="next"'})
+    with pytest.raises(CanvasError, match="not allowed"):
+        client.get_all("/courses")
+
+
+@respx.mock
+def test_redirect_on_api_call_is_an_error(client):
+    respx.get(f"{API}/courses").respond(301, headers={"Location": "http://canvas.example.edu/api/v1/courses"})
+    with pytest.raises(CanvasError):
+        client.get("/courses")
+
+
+def test_trailing_newline_path_is_refused(client):
+    with pytest.raises(CanvasError, match="not allowed"):
+        client.get("/courses\n")
+
+
+@respx.mock
+def test_expired_cache_entries_are_pruned():
+    now = [0.0]
+    client = CanvasClient(BASE, TOKEN, ttl=10, clock=lambda: now[0])
+    respx.get(f"{API}/announcements").respond(json=[])
+    for i in range(5):
+        client.get("/announcements", params=[("x", str(i))])
+    now[0] = 11
+    client.get("/announcements", params=[("x", "new")])
+    assert len(client._cache) == 1
+
+
+@respx.mock
+def test_download_streams_and_stops_over_cap(monkeypatch, client):
+    import canvas_mcp.client as mod
+    monkeypatch.setattr(mod, "MAX_DOWNLOAD_BYTES", 1000)
+    respx.get(f"{API}/files/9").respond(json={"id": 9, "size": 10, "url": f"{BASE}/files/9/download"})
+    respx.get(f"{BASE}/files/9/download").respond(content=b"x" * 5000)
+    with pytest.raises(CanvasError, match="too large"):
+        client.download(9)
+
+
+@respx.mock
+def test_download_hop_on_canvas_host_must_be_a_file_download_path(client):
+    respx.get(f"{API}/files/7").respond(json={"id": 7, "url": f"{BASE}/api/v1/users/self/profile"})
+    with pytest.raises(CanvasError, match="not allowed"):
+        client.download(7)

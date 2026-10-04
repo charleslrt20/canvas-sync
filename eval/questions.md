@@ -1,5 +1,7 @@
 # Model check
 
+Used to choose the models. Outcome: local `qwen3:8b` was accurate but took 1.5–2.5 min per reply on a 16 GB M4. Groq's free tier failed after 1–2 questions. NVIDIA `nemotron-3-super-120b-a12b` answered all 7 back-to-back questions correctly in 1–11 s and is the chat model. Rerun this list after any model or config change.
+
 Send each question on Telegram, first with `/model local` on `qwen3:8b`, then on `qwen3:14b`, and use `/new` between models. Score each answer:
 - **Tool:** did it call the expected tool? (✅/❌)
 - **Correct:** does it match Canvas? (✅/❌)

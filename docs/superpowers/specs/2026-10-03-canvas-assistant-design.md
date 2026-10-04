@@ -1,7 +1,7 @@
 # Canvas Assistant — Design
 
 **Date:** 2026-10-03
-**Status:** Draft, awaiting review
+**Status:** Implemented (2026-10-04). This is the original design. Where it differs from what was built (Groq → NVIDIA, the 8 PM check dropped, the repo layout), the **Revisions** table at the end and the README are authoritative.
 
 ## Goal
 

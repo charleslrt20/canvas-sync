@@ -46,25 +46,37 @@ Both files should be `chmod 600`. Rotate the Canvas token at canvas.mit.edu → 
 
 ## Setup (from scratch)
 
-```bash
-# 1. Canvas server
-cd canvas-mcp && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                       # unit tests
-.venv/bin/python scripts/smoke.py      # live read-only check (needs ../.env)
+Run everything from the repo root. This setup is personal: `openclaw/config.patch.json5` contains this Mac's absolute path to `canvas-mcp/` (`mcp.servers.canvas_lms`) and one Telegram user ID (`allowFrom`), and `openclaw/automations.sh` has the same ID. If you clone the repo elsewhere, edit those first.
 
-# 2. Models and plugins
-ollama pull qwen3:8b            # NVIDIA provider is bundled with OpenClaw
+```bash
+# 0. Secrets (never committed)
+cp .env.example .env && chmod 600 .env          # then set CANVAS_TOKEN
+touch ~/.openclaw/.env && chmod 600 ~/.openclaw/.env
+#    add TELEGRAM_BOT_TOKEN=... and NVIDIA_API_KEY=nvapi-... to ~/.openclaw/.env
+
+# 1. Canvas server
+(cd canvas-mcp && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock && .venv/bin/pip install --no-deps -e .)
+canvas-mcp/.venv/bin/pytest canvas-mcp          # unit tests (pytest/respx are in the lockfile)
+canvas-mcp/.venv/bin/python canvas-mcp/scripts/smoke.py   # live read-only check against Canvas
+
+# 2. Local model for the 8 AM brief (the NVIDIA provider is bundled with OpenClaw)
+ollama pull qwen3:8b
 
 # 3. OpenClaw config (back up first)
 cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.pre-canvas
+mkdir -p ~/.openclaw/workspace.pre-canvas && cp ~/.openclaw/workspace/*.md ~/.openclaw/workspace.pre-canvas/
 openclaw config patch --file openclaw/config.patch.json5 --dry-run
 openclaw config patch --file openclaw/config.patch.json5
 cp openclaw/workspace/*.md ~/.openclaw/workspace/
-openclaw gateway restart && openclaw doctor && openclaw security audit
+chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+openclaw doctor && openclaw security audit
 
 # 4. 8 AM brief
 bash openclaw/automations.sh
 ```
+
+The `.env` path: `canvas_mcp/server.py` finds `Canvas_sync/.env` relative to the source tree, which works with the editable install above. Otherwise set `CANVAS_ENV_FILE=/path/to/.env`.
 
 ## Operations
 
@@ -76,13 +88,30 @@ bash openclaw/automations.sh
 
 ## Moving to an always-on server (later)
 
-Follow the official [Oracle Cloud Always Free guide](https://docs.openclaw.ai/install/oracle) (ARM, 4 CPU / 24 GB). Copy this repo and both `.env` files, then rerun the setup steps. Update the absolute paths in `mcp.servers.canvas_lms` in the patch. Ollama on the server's CPU will be slower, so consider `qwen3:8b` or making `cloud` the default there.
+Follow the official [Oracle Cloud Always Free guide](https://docs.openclaw.ai/install/oracle) (ARM, 4 CPU / 24 GB). Copy this repo and both `.env` files, then rerun the setup steps. Update the absolute paths in `mcp.servers.canvas_lms` in the patch. Ollama on the server's CPU will be slower, so the 8 AM brief could also run on `cloud` there (`REMINDER_MODEL=nvidia/nvidia/nemotron-3-super-120b-a12b bash openclaw/automations.sh`).
+
+## Security model
+
+- **Telegram:** only one Telegram user ID can talk to the bot. Groups are off, and link previews are off so an injected URL can't be fetched silently.
+- **Gateway:** bound to 127.0.0.1 with token auth.
+- **Plugins:** only `telegram`, `ollama` and `nvidia` may load.
+- **Tools:** the model sees exactly 8 tools, all read-only Canvas ones. Shell, files, browser, web, memory, sessions and messaging are all denied.
+- **Canvas server** (`canvas-mcp/src/canvas_mcp/client.py`):
+  - sends only GET requests, to an allowlist of API paths, over HTTPS to the Canvas host
+  - never follows redirects on API calls
+  - sends the token only to the Canvas host, never to the file CDN
+  - streams downloads with a 50 MB cap and parses at most 300 PDF pages
+- **Prompt injection:** `openclaw/workspace/AGENTS.md` tells the model that Canvas text is data, not instructions. This is a soft guard; the hard guarantees are the read-only tools and the absence of any way to send data out.
+- **Secrets:** `.env` files are git-ignored and `chmod 600`. The repo itself contains no secrets.
 
 ## Limitations
 
 - **Why NVIDIA rather than Groq:** Groq's free tier caps usage at 8k tokens/minute. A question that uses a tool needs 10–12k tokens, so chats broke after 1–2 questions. NVIDIA passed the same 7-question back-to-back test in 1–11 s per answer. It publishes no hard limits; community reports say about 40 requests/minute per model.
 - **No local fallback in chat:** when the cloud model fails, the bot reports an error instead of switching to the local model. Switching stalled replies for minutes and used up the Mac's RAM.
-- What you ask in chat, and the Canvas data it looks up, goes to NVIDIA. Use `/model local` for anything you want to keep private.
+- **Where your data goes:**
+  - **NVIDIA** receives your chat messages and the Canvas data the bot looks up (grades, announcements, file text). Its free-API retention terms aren't published, so use `/model local` for anything private.
+  - **Telegram** stores bot chats on its servers; bot chats aren't end-to-end encrypted.
+  - **Canvas** logs each lookup as a page view, which instructors can see in course analytics.
 - The bot can only read what's in Canvas. Many MIT classes post materials on their own course websites.
-- Reminders only go out while the gateway is running.
+- The 8 AM brief only goes out while the gateway is running (a missed run catches up when the Mac wakes).
 - Scanned PDFs (images only) have no extractable text.

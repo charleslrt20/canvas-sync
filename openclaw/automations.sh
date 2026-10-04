@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Creates the 8 AM Canvas brief (the 8 PM check was dropped). Run once, after the config patch is applied
-# and the gateway is running. List them with: openclaw automations list
+# Creates the daily 8 AM Canvas brief. Run once, after the config patch is applied
+# and the gateway is running. Check it with: openclaw automations list
 set -euo pipefail
 
 OC="${OPENCLAW:-$HOME/.openclaw/bin/openclaw}"

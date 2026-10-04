@@ -1,12 +1,13 @@
 """The Canvas tools the assistant can call.
 
 Each tool returns compact, model-friendly data (only the fields that matter,
-times already in Boston local time) so a small local model stays in context.
+times already in Boston local time) so prompts stay small and fast.
 Tools raise CanvasError on failure; the MCP server turns that into a message.
 """
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -15,12 +16,13 @@ from .client import CanvasClient, CanvasError
 from .textutil import chunk, extract_text, html_to_text
 
 LOCAL_TZ = ZoneInfo("America/New_York")
-# Tool results are kept small: Groq's free tier rejects any request over 8k tokens.
+# Tool results are kept small so prompts stay fast (and within free-tier API limits).
 PREVIEW_CHARS = 280  # announcement text in overviews
 FULL_MESSAGE_CHARS = 1500  # announcement text when searching for specific ones
 MAX_ANNOUNCEMENTS = 10
 MAX_FILES = 30
 FILE_CHUNK_CHARS = 4000
+TEXT_CACHE_SECONDS = 600  # read_file(page=2, 3, ...) reuses the extracted text
 
 
 def _parse(ts: str | None) -> datetime | None:
@@ -37,6 +39,12 @@ def _local(ts: str | None, now: datetime) -> str | None:
     dt = dt.astimezone(LOCAL_TZ)
     fmt = "%a %b %-d, %-I:%M %p" if dt.year == now.astimezone(LOCAL_TZ).year else "%a %b %-d, %Y, %-I:%M %p"
     return dt.strftime(fmt)
+
+
+def _course_id(context_code: str | None) -> int | None:
+    """'course_123' -> 123; anything else -> None."""
+    tail = str(context_code or "").removeprefix("course_")
+    return int(tail) if tail.isdigit() else None
 
 
 def _utc_iso(dt: datetime) -> str:
@@ -58,11 +66,16 @@ class CanvasTools:
     def __init__(self, client: CanvasClient, now: Callable[[], datetime] | None = None) -> None:
         self._client = client
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._texts: dict[int, tuple[float, str, str]] = {}  # file_id -> (expires, name, text)
 
     # -- helpers ---------------------------------------------------------------
 
     def _fmt(self, ts: str | None) -> str | None:
         return _local(ts, self._now())
+
+    def _window_now(self) -> datetime:
+        """Current time floored to the minute, so repeat queries hit the client cache."""
+        return self._now().replace(second=0, microsecond=0)
 
     def _courses(self) -> list[dict]:
         return [
@@ -79,7 +92,7 @@ class CanvasTools:
         return [{"course_id": c["id"], "code": c.get("course_code"), "name": c["name"]} for c in self._courses()]
 
     def upcoming(self, days: int = 7, course_id: int | None = None, only_unsubmitted: bool = False) -> Any:
-        now = self._now()
+        now = self._window_now()
         params = [
             ("start_date", _utc_iso(now)),
             ("end_date", _utc_iso(now + timedelta(days=days))),
@@ -163,24 +176,24 @@ class CanvasTools:
         ids = [int(course_id)] if course_id else list(labels)
         if not ids:
             return "No active courses."
-        now = self._now()
+        now = self._window_now()
         params = [("start_date", _utc_iso(now - timedelta(days=days))), ("end_date", _utc_iso(now)), ("per_page", "50")]
         params += [("context_codes[]", f"course_{i}") for i in ids]
         rows = self._client.get_all("/announcements", params)
         if search:
             needle = search.lower()
             rows = [a for a in rows if needle in (a.get("title") or "").lower() or needle in (a.get("message") or "").lower()]
-        rows.sort(key=lambda a: a.get("posted_at") or "", reverse=True)
+        rows = sorted(rows, key=lambda a: a.get("posted_at") or "", reverse=True)  # don't mutate the cache
         limit = FULL_MESSAGE_CHARS if search else PREVIEW_CHARS
         out: list = []
         for a in rows[:MAX_ANNOUNCEMENTS]:
             text = html_to_text(a.get("message"))
             if len(text) > limit:
                 text = text[:limit].rstrip() + "…"
-            cid = int(str(a.get("context_code", "course_0")).removeprefix("course_"))
+            cid = _course_id(a.get("context_code"))
             out.append({
                 "title": a.get("title"),
-                "course": labels.get(cid, str(cid)),
+                "course": labels.get(cid, str(cid or "unknown course")),
                 "posted": self._fmt(a.get("posted_at")),
                 "author": (a.get("author") or {}).get("display_name"),
                 "message": text,
@@ -219,7 +232,9 @@ class CanvasTools:
             a = s.get("assignment") or {}
             score = "-" if s.get("score") is None else f"{s['score']:g}"
             status = "missing" if s.get("missing") else ("late" if s.get("late") else s.get("workflow_state"))
-            out.append({"assignment": a.get("name"), "score": f"{score}/{a.get('points_possible', 0):g}", "status": status})
+            points = a.get("points_possible")
+            out.append({"assignment": a.get("name"), "score": score if points is None else f"{score}/{points:g}",
+                        "status": status})
         return out or "No graded work yet in this course."
 
     def list_files(self, course_id: int, search: str | None = None) -> Any:
@@ -243,12 +258,21 @@ class CanvasTools:
         return out or "No files found."
 
     def read_file(self, file_id: int, page: int = 1) -> str:
-        meta, data = self._client.download(int(file_id))
-        name = meta.get("display_name") or meta.get("filename") or f"file {file_id}"
-        try:
-            text = extract_text(data, meta.get("content-type"), name)
-        except ValueError as exc:
-            return str(exc)
+        file_id = int(file_id)
+        hit = self._texts.get(file_id)
+        if hit and hit[0] > time.monotonic():
+            _, name, text = hit
+        else:
+            meta, data = self._client.download(file_id)
+            name = meta.get("display_name") or meta.get("filename") or f"file {file_id}"
+            try:
+                text = extract_text(data, meta.get("content-type"), name)
+            except ValueError as exc:  # unsupported type
+                return str(exc)
+            except Exception:  # corrupt or malicious file: never crash the server
+                return f"Couldn't read {name}: the file looks damaged or isn't a normal PDF/text file."
+            self._texts = {k: v for k, v in self._texts.items() if v[0] > time.monotonic()}
+            self._texts[file_id] = (time.monotonic() + TEXT_CACHE_SECONDS, name, text)
         if not text.strip():
             return f"{name} has no extractable text (it may be scanned images)."
         return f"{name}\n\n{chunk(text, page=page, size=FILE_CHUNK_CHARS)}"

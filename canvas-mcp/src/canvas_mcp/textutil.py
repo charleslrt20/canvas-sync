@@ -10,6 +10,7 @@ from pypdf import PdfReader
 
 _BLOCK_TAGS = {"p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "table", "ul", "ol", "pre", "blockquote"}
 _SKIP_TAGS = {"script", "style", "head"}
+MAX_PDF_PAGES = 300  # bound parsing time/memory on huge or hostile PDFs
 
 
 class _TextParser(HTMLParser):
@@ -60,7 +61,7 @@ def extract_text(data: bytes, content_type: str | None, filename: str) -> str:
     name = filename.lower()
     if "pdf" in ctype or name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(data))
-        pages = [p.extract_text() or "" for p in reader.pages]
+        pages = [p.extract_text() or "" for p in reader.pages[:MAX_PDF_PAGES]]
         return "\n\n".join(f"--- slide/page {i} ---\n{t.strip()}" for i, t in enumerate(pages, 1) if t.strip())
     if "html" in ctype or name.endswith((".html", ".htm")):
         return html_to_text(data.decode("utf-8", errors="replace"))

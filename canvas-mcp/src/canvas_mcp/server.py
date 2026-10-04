@@ -50,6 +50,9 @@ def _run(name: str, **kwargs: Any) -> str:
         if "CANVAS_TOKEN" in str(exc):
             _tools.cache_clear()  # pick up the token once .env is filled in, without a restart
         return f"Canvas error: {exc}"
+    except Exception as exc:  # malformed Canvas data etc.: log for debugging, keep the server alive
+        logging.getLogger("canvas_mcp").exception("tool %s failed", name)
+        return f"Canvas error: unexpected response from Canvas ({type(exc).__name__})"
     return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=1)
 
 

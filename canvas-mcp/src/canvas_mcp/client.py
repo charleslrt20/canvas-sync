@@ -28,14 +28,18 @@ ALLOWED_PATHS = [
     )
 ]
 
-# Hosts Canvas redirects file downloads to (Instructure's file CDN).
+# The first download hop on the Canvas host itself must be a file-download URL.
+_CANVAS_DOWNLOAD_PATH = re.compile(r"/(courses/\d+/)?files/\d+/download")
+# Hosts Canvas redirects file downloads to (Instructure's file CDN). The token is never sent there.
 FILE_CDN_SUFFIXES = (".canvas-user-content.com", ".inscloudgate.net", ".instructure.com", ".s3.amazonaws.com")
 MAX_DOWNLOAD_BYTES = 50_000_000
 _LINK_NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
 
+_TOKEN_INVALID = "Canvas token invalid or expired"
+_NO_PERMISSION = "no permission to view this in Canvas"
 _STATUS_MESSAGES = {
-    401: "Canvas token invalid or expired",
-    403: "no permission to view this in Canvas",
+    401: _TOKEN_INVALID,  # refined in _raise_for_status: Canvas also uses 401 for "not authorized"
+    403: _NO_PERMISSION,
     404: "not found in Canvas",
     429: "Canvas rate limited the request, retry in a minute",
 }
@@ -59,7 +63,9 @@ class CanvasClient:
         if not token:
             raise CanvasError("CANVAS_TOKEN is not set")
         self._base = base_url.rstrip("/")
-        self._host = urlsplit(self._base).hostname
+        base = urlsplit(self._base)
+        self._origin = (base.scheme, base.hostname, base.port)
+        self._host = base.hostname
         self._api = f"{self._base}/api/v1"
         self._token = token
         self._ttl = ttl
@@ -94,7 +100,7 @@ class CanvasClient:
         return self._cached(("all", path, tuple(params or ())), fetch)
 
     def download(self, file_id: int) -> tuple[dict, bytes]:
-        """Return (file metadata, file bytes) for a Canvas file."""
+        """Return (file metadata, file bytes) for a Canvas file, streamed with a size cap."""
         meta = self.get(f"/files/{int(file_id)}")
         if (meta.get("size") or 0) > MAX_DOWNLOAD_BYTES:
             raise CanvasError("file too large to read (over 50 MB)")
@@ -102,73 +108,109 @@ class CanvasClient:
         if not url:
             raise CanvasError("file has no download URL (it may be locked)")
         for _ in range(5):
-            resp = self._send(url, auth=urlsplit(url).hostname == self._host, check_host=True)
-            if resp.is_redirect:
-                url = str(resp.next_request.url) if resp.next_request else resp.headers["Location"]
-                continue
-            self._raise_for_status(resp)
-            if len(resp.content) > MAX_DOWNLOAD_BYTES:
-                raise CanvasError("file too large to read (over 50 MB)")
-            return meta, resp.content
+            self._check_download_url(url)
+            on_canvas = urlsplit(url).hostname == self._host
+            next_url, data = self._stream_get(url, auth=on_canvas)
+            if next_url is None:
+                return meta, data
+            url = next_url
         raise CanvasError("too many redirects downloading file")
 
     # -- internals -------------------------------------------------------------
 
     def _url(self, path: str) -> str:
+        if not any(p.fullmatch(path) for p in ALLOWED_PATHS):
+            raise CanvasError(f"request not allowed: {path!r}")
         return f"{self._api}{path}"
 
     def _cached(self, key: tuple, fetch: Callable[[], Any]) -> Any:
-        hit = self._cache.get(key)
         now = self._clock()
+        hit = self._cache.get(key)
         if hit and hit[0] > now:
             return hit[1]
         value = fetch()
+        self._cache = {k: v for k, v in self._cache.items() if v[0] > now}  # drop expired entries
         self._cache[key] = (now + self._ttl, value)
         return value
 
     def _check_api_url(self, url: str) -> None:
         parts = urlsplit(url)
         path = parts.path
-        if parts.hostname != self._host or not path.startswith("/api/v1/") or ".." in path:
+        if (parts.scheme, parts.hostname, parts.port) != self._origin or not path.startswith("/api/v1/"):
             raise CanvasError(f"request not allowed: {path}")
         api_path = path[len("/api/v1"):]
-        if not any(p.match(api_path) for p in ALLOWED_PATHS):
+        if not any(p.fullmatch(api_path) for p in ALLOWED_PATHS):
             raise CanvasError(f"request not allowed: {api_path}")
 
-    def _check_download_host(self, url: str) -> None:
+    def _check_download_url(self, url: str) -> None:
         parts = urlsplit(url)
         host = parts.hostname or ""
-        if parts.scheme != "https" or not (host == self._host or host.endswith(FILE_CDN_SUFFIXES)):
+        if parts.scheme != "https":
+            raise CanvasError(f"download not allowed over {parts.scheme or 'unknown scheme'}")
+        if host == self._host:
+            if not _CANVAS_DOWNLOAD_PATH.fullmatch(parts.path):
+                raise CanvasError(f"download path not allowed: {parts.path}")
+        elif not host.endswith(FILE_CDN_SUFFIXES):
             raise CanvasError(f"download host not allowed: {host}")
 
     def _get_json(self, url: str, params) -> tuple[Any, str | None]:
         self._check_api_url(url)
-        resp = self._send(url, params=params, auth=True)
+        resp = self._request("GET", url, params=params, auth=True)
+        if resp.is_redirect:  # API calls never legitimately redirect; don't follow, don't parse
+            raise CanvasError(f"Canvas request failed (unexpected redirect, HTTP {resp.status_code})")
         self._raise_for_status(resp)
         match = _LINK_NEXT.search(resp.headers.get("Link", ""))
         next_url = match.group(1) if match else None
         if next_url:
             self._check_api_url(next_url)
-        return resp.json(), next_url
+        try:
+            return resp.json(), next_url
+        except ValueError:
+            raise CanvasError("Canvas sent an unreadable response") from None
 
-    def _send(self, url: str, *, params=None, auth: bool, check_host: bool = False) -> httpx.Response:
-        if check_host:
-            self._check_download_host(url)
-        return self._request("GET", url, params=params, auth=auth)
+    def _stream_get(self, url: str, *, auth: bool) -> tuple[str | None, bytes]:
+        """GET a file; returns (redirect_url, b"") or (None, body). Stops reading at the size cap."""
+        headers = self._auth_headers(auth)
+        try:
+            with self._http.stream("GET", url, headers=headers) as resp:
+                if resp.is_redirect:
+                    return str(resp.next_request.url) if resp.next_request else resp.headers["Location"], b""
+                if resp.status_code >= 400:
+                    resp.read()  # small error body, needed to tell a bad token from "not authorized"
+                self._raise_for_status(resp)
+                body = bytearray()
+                for chunk in resp.iter_bytes():
+                    body += chunk
+                    if len(body) > MAX_DOWNLOAD_BYTES:
+                        raise CanvasError("file too large to read (over 50 MB)")
+                return None, bytes(body)
+        except httpx.HTTPError as exc:
+            raise CanvasError(f"could not reach Canvas ({type(exc).__name__})") from None
 
     def _request(self, method: str, url: str, *, params=None, auth: bool = True) -> httpx.Response:
         if method != "GET":
             raise CanvasError("this Canvas client is read-only")
-        headers = {"Authorization": f"Bearer {self._token}"} if auth else {}
         try:
-            return self._http.request("GET", url, params=params, headers=headers)
+            return self._http.request("GET", url, params=params, headers=self._auth_headers(auth))
         except httpx.HTTPError as exc:
             raise CanvasError(f"could not reach Canvas ({type(exc).__name__})") from None
+
+    def _auth_headers(self, auth: bool) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"} if auth else {}
 
     @staticmethod
     def _raise_for_status(resp: httpx.Response) -> None:
         if resp.status_code < 400:
             return
+        if resp.status_code == 401:
+            # Canvas uses 401 both for a bad token (with WWW-Authenticate / "Invalid access
+            # token") and for "user not authorized to perform that action" with a good one.
+            try:
+                body = resp.text.lower()
+            except httpx.ResponseNotRead:  # streamed download error before the body was read
+                body = ""
+            bad_token = "WWW-Authenticate" in resp.headers or "invalid access token" in body or "expired" in body
+            raise CanvasError(_TOKEN_INVALID if bad_token else _NO_PERMISSION)
         if resp.status_code in _STATUS_MESSAGES:
             raise CanvasError(_STATUS_MESSAGES[resp.status_code])
         if resp.status_code >= 500:
