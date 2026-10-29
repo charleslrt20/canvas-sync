@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates the daily 8 AM Canvas brief. Run once, after the config patch is applied
+# Creates the daily 9 AM Canvas brief. Run once, after the config patch is applied
 # and the gateway is running. Check it with: openclaw automations list
 set -euo pipefail
 
@@ -8,7 +8,7 @@ TO="${TELEGRAM_CHAT_ID:?Set TELEGRAM_CHAT_ID to your Telegram user ID (also your
 MODEL="${REMINDER_MODEL:-ollama/qwen3:8b}"
 COMMON=(--tz "America/New_York" --session isolated --model "$MODEL" --announce --channel telegram --to "$TO")
 
-"$OC" automations add "0 8 * * *" \
+"$OC" automations add "0 9 * * *" \
   "Morning brief. Use the canvas_lms tools: upcoming(days=2, only_unsubmitted=true), missing(), and announcements(days=1).
 Reply with a short Telegram message:
 ☀️ Due in the next 48h: bullet list (title — course — due time), soonest first, or 'nothing 🎉'.

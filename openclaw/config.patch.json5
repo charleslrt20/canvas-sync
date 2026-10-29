@@ -32,7 +32,7 @@
       userTimezone: "America/New_York",
       models: {
         // 16k context fits the prompt plus tool results and uses ~2.5 GB less RAM than 32k.
-        // The local model mostly runs the 8 AM brief, so unload it soon after.
+        // The local model mostly runs the 9 AM brief, so unload it soon after.
         "ollama/qwen3:8b": { alias: "local", params: { num_ctx: 16384, keep_alive: "5m" } },
         "nvidia/nvidia/nemotron-3-super-120b-a12b": { alias: "cloud" },
         "nvidia/openai/gpt-oss-20b": { alias: "cloud-small" },
@@ -44,7 +44,7 @@
         // Chat runs on NVIDIA's free API (Nemotron 3 Super 120B), falling back to
         // gpt-oss-20b on the same API. Never falls back to the local model: that
         // stalled replies for minutes and starved the Mac of RAM.
-        // The 8 AM reminder pins ollama/qwen3:8b in openclaw/automations.sh.
+        // The 9 AM reminder pins ollama/qwen3:8b in openclaw/automations.sh.
         // /model local = private mode (on-device, ~2 min per reply).
         model: {
           primary: "nvidia/nvidia/nemotron-3-super-120b-a12b",
