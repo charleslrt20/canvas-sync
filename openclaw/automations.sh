@@ -5,7 +5,9 @@ set -euo pipefail
 
 OC="${OPENCLAW:-$HOME/.openclaw/bin/openclaw}"
 TO="${TELEGRAM_CHAT_ID:?Set TELEGRAM_CHAT_ID to your Telegram user ID (also your DM chat ID)}"
-MODEL="${REMINDER_MODEL:-ollama/qwen3:8b}"
+# Cloud, not ollama/qwen3:8b: at 9 AM the Mac is usually asleep with only seconds-long
+# dark wakes, and the local model took 30-70 min there (timeouts, lost network).
+MODEL="${REMINDER_MODEL:-nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b}"
 COMMON=(--tz "America/New_York" --session isolated --model "$MODEL" --announce --channel telegram --to "$TO")
 
 "$OC" automations add "0 9 * * *" \

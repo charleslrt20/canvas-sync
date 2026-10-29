@@ -17,7 +17,7 @@
       ollama: { baseUrl: "http://127.0.0.1:11434" },
       // NVIDIA build.nvidia.com: free, no card, ~2 s per call, no rate limit hit in
       // testing (Groq's free tier, 8k tokens/min, broke after 1-2 questions).
-      // Key: NVIDIA_API_KEY in ~/.openclaw/.env. Nemotron is in the bundled catalog;
+      // Key: NVIDIA_API_KEY in ~/.openclaw/.env. Nemotron 3.5 Super is in the bundled catalog;
       // gpt-oss-20b is registered here so it can be the fallback.
       nvidia: {
         baseUrl: "https://integrate.api.nvidia.com/v1",
@@ -34,20 +34,22 @@
         // 16k context fits the prompt plus tool results and uses ~2.5 GB less RAM than 32k.
         // The local model mostly runs the 9 AM brief, so unload it soon after.
         "ollama/qwen3:8b": { alias: "local", params: { num_ctx: 16384, keep_alive: "5m" } },
-        "nvidia/nvidia/nemotron-3-super-120b-a12b": { alias: "cloud" },
+        "nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b": { alias: "cloud" },
+        // Listed by NVIDIA but every call 404s since 2026-10-21.
+        "nvidia/nvidia/nemotron-3-super-120b-a12b": null,
         "nvidia/openai/gpt-oss-20b": { alias: "cloud-small" },
         "groq/openai/gpt-oss-120b": null, // replaced by NVIDIA
       },
     },
     entries: {
       main: {
-        // Chat runs on NVIDIA's free API (Nemotron 3 Super 120B), falling back to
+        // Chat runs on NVIDIA's free API (Nemotron 3.5 Super 120B), falling back to
         // gpt-oss-20b on the same API. Never falls back to the local model: that
         // stalled replies for minutes and starved the Mac of RAM.
-        // The 9 AM reminder pins ollama/qwen3:8b in openclaw/automations.sh.
+        // The 9 AM reminder pins its model in openclaw/automations.sh.
         // /model local = private mode (on-device, ~2 min per reply).
         model: {
-          primary: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+          primary: "nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b",
           fallbacks: ["nvidia/openai/gpt-oss-20b"],
         },
         // Only free models can be selected; blocks the paid Anthropic profile.
@@ -64,6 +66,10 @@
       },
     },
   },
+
+  // No Skill Workshop self-learning. Its weekly collection review needs the file and
+  // shell tools denied below, so it failed every week.
+  skills: { workshop: { autonomous: { mode: "off" } } },
 
   channels: {
     telegram: {

@@ -2,17 +2,17 @@
 
 A personal study assistant on Telegram that knows your MIT Canvas: deadlines, missing work, announcements, grades and course files. It runs on [OpenClaw](https://docs.openclaw.ai) with free open models:
 
-- **Chat:** Nemotron 3 Super 120B on NVIDIA's free API (build.nvidia.com), 1–11 s per reply, with gpt-oss-20b on the same API as fallback.
-- **Reminder:** Qwen3 8B on Ollama, locally. A brief is sent every day at 9 AM.
+- **Chat:** Nemotron 3.5 Super 120B on NVIDIA's free API (build.nvidia.com), 1–11 s per reply, with gpt-oss-20b on the same API as fallback.
+- **Reminder:** a brief is sent every day at 9 AM, on the same NVIDIA model as chat.
 - **Private mode:** `/model local` keeps a chat fully on your Mac, at 1.5–2.5 min per reply.
 
 Design: [docs/superpowers/specs/2026-10-03-canvas-assistant-design.md](docs/superpowers/specs/2026-10-03-canvas-assistant-design.md)
 
 ```
 Telegram ──► OpenClaw gateway (launchd, loopback-only)
-                ├─ main agent: nvidia/nvidia/nemotron-3-super-120b-a12b
+                ├─ main agent: nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b
                 │    fallback nvidia/openai/gpt-oss-20b · /model local → ollama/qwen3:8b
-                ├─ 9 AM brief: ollama/qwen3:8b
+                ├─ 9 AM brief: nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b
                 └─ canvas_lms MCP server (canvas-mcp/, read-only, holds the token)
 ```
 
@@ -60,7 +60,7 @@ export TELEGRAM_CHAT_ID=...                     # your numeric Telegram user ID,
 canvas-mcp/.venv/bin/pytest canvas-mcp          # unit tests (pytest/respx are in the lockfile)
 canvas-mcp/.venv/bin/python canvas-mcp/scripts/smoke.py   # live read-only check against Canvas
 
-# 2. Local model for the 9 AM brief (the NVIDIA provider is bundled with OpenClaw)
+# 2. Local model for /model local (the NVIDIA provider is bundled with OpenClaw)
 ollama pull qwen3:8b
 
 # 3. OpenClaw config (back up first)
@@ -85,13 +85,13 @@ The `.env` path: `canvas_mcp/server.py` finds `Canvas_sync/.env` relative to the
 
 - **Logs and status:** `openclaw doctor`, `openclaw automations list`, `openclaw mcp list`
 - **Run a reminder now:** `openclaw automations run <jobId>`
-- **Missed brief:** if the Mac was asleep at 9 AM, the job runs when the gateway comes back. This is the default, `cron.skipMissedJobs: false`.
+- **Missed brief:** if the Mac was asleep at 9 AM, the job runs when the gateway comes back. This is the default, `cron.skipMissedJobs: false`. On battery with the lid closed the Mac only wakes for seconds at a time with the network off, so runs fail on Canvas or Telegram errors. Keep it plugged in overnight and schedule a wake: `sudo pmset repeat wakeorpoweron MTWRFSU 08:55:00`.
 - **Restart the gateway:** `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway`. `openclaw gateway restart` sometimes refuses with GATEWAY_RESTART_PREPARATION_REFUSED.
 - **Rollback to the previous Claude setup:** `cp ~/.openclaw/openclaw.json.pre-canvas ~/.openclaw/openclaw.json && cp ~/.openclaw/workspace.pre-canvas/*.md ~/.openclaw/workspace/`, then restart the gateway.
 
 ## Moving to an always-on server (later)
 
-Follow the official [Oracle Cloud Always Free guide](https://docs.openclaw.ai/install/oracle) (ARM, 4 CPU / 24 GB). Copy this repo and both `.env` files, then rerun the setup steps. Update the absolute paths in `mcp.servers.canvas_lms` in the patch. Ollama on the server's CPU will be slower, so the 9 AM brief could also run on `cloud` there (`REMINDER_MODEL=nvidia/nvidia/nemotron-3-super-120b-a12b bash openclaw/automations.sh`).
+Follow the official [Oracle Cloud Always Free guide](https://docs.openclaw.ai/install/oracle) (ARM, 4 CPU / 24 GB). Copy this repo and both `.env` files, then rerun the setup steps. Update the absolute paths in `mcp.servers.canvas_lms` in the patch.
 
 ## Security model
 
